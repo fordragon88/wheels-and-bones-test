@@ -1,7 +1,7 @@
 {
  "base_url": "https://fordragon88.github.io/wheels-and-bones-test/godot/",
  "engine": "wnb-engine-332bf379e9",
- "pack": "wnb-5cd6522bfe.pck",
+ "pack": "wnb-ec3eb0aa72.pck",
  "frames_v": "8aa82d8dd7",
  "music_v": "87f103730e",
  "sizes": {
@@ -9,12 +9,12 @@
   "wasm_gz": 10114291,
   "js": 279815,
   "js_gz": 68740,
-  "pck": 10046976,
-  "pck_gz": 8930610,
+  "pck": 10051232,
+  "pck_gz": 8934752,
   "frames": 73528908,
   "frames_n": 2536,
   "music": 3899114,
-  "first_gz": 19349412
+  "first_gz": 19353554
  },
- "time": "2026-11-21 17:41"
+ "time": "2026-11-21 18:35"
 }
