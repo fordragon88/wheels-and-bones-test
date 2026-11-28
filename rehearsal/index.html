@@ -98,7 +98,7 @@ html, body, #canvas { overscroll-behavior: none; }
   } catch (err) {}
   e.why = why.join(', ') || '—';
   // iOS (iPhone, iPod, iPad, iPad «как компьютер»: Macintosh + касания): громкость <audio> из скрипта не задаётся,
-  // Web Audio по умолчанию («auto» → «ambient») глушится переключателем «Без звука» (29.11, снимки ?diag=1 с iPhone)
+  // Web Audio по умолчанию («auto» → «ambient») глушится переключателем «Без звука» (28.11, снимки ?diag=1 с iPhone)
   e.ios = /iPhone|iPod|iPad/.test(ua) || (/Macintosh/.test(ua) && e.mtp > 1);
   // Audio Session API (WebKit: Safari/iOS 16.4+, «subset of the AudioSession Web API»; w3c.github.io/audio-session):
   // type «playback» — сессия воспроизведения (как у видео и музыки), не «ambient». Только на iOS.
@@ -126,6 +126,27 @@ html, body, #canvas { overscroll-behavior: none; }
     });
     return;
   }
+  // выход звука движка (28.11: эффекты молчали из-за кольца шин): анализатор на всём, что идёт в выход, пик за 2 с
+  var outp = window.wnbOut = { an: [], peak: 0, hist: [] };
+  try {
+    var oconn = AudioNode.prototype.connect;
+    AudioNode.prototype.connect = function (dst) {
+      try {
+        if (dst && typeof AudioDestinationNode !== 'undefined' && dst instanceof AudioDestinationNode && !this.__wnbTap) {
+          this.__wnbTap = true;
+          var a = dst.context.createAnalyser(); a.fftSize = 1024; oconn.call(this, a); outp.an.push(a);
+        }
+      } catch (err) {}
+      return oconn.apply(this, arguments);
+    };
+    var obuf = new Float32Array(1024);
+    setInterval(function () {
+      var m = 0;
+      outp.an.forEach(function (a) { a.getFloatTimeDomainData(obuf); for (var i = 0; i < obuf.length; i++) { var v = Math.abs(obuf[i]); if (v > m) m = v; } });
+      outp.hist.push(m); if (outp.hist.length > 40) outp.hist.shift();
+      outp.peak = Math.max.apply(null, outp.hist);
+    }, 50);
+  } catch (err) {}
   var inp = { touch: 0, mouse: 0, pointer: 0, last: '-', lastPT: '-' };
   window.wnbInput = inp;
   document.addEventListener('pointerdown', function (ev) { inp.pointer++; inp.last = 'pointerdown'; inp.lastPT = ev.pointerType || '?'; }, true);
@@ -182,7 +203,8 @@ html, body, #canvas { overscroll-behavior: none; }
         ((window.wnbEnv && window.wnbEnv.session && window.wnbEnv.session.err) ? ' (ошибка ' + window.wnbEnv.session.err + ')' : '') +
         ' · тихий элемент ' + (window.wnbSilent ? window.wnbSilent() : '-') +
         (ctxs.some(function (c) { return c.state !== 'running'; }) ? ' · ВНИМАНИЕ: контекст не running' : ''),
-      'эффекты: ' + (g.sfx || '?'),
+      'эффекты: ' + (g.sfx || '?') + ' · выход звука: пик ' + outp.peak.toFixed(3) + ' за последние 2 с (Web Audio: эффекты' +
+        (window.wnbMusic && /"mode":"(buffer|gain)"/.test(window.wnbMusic.info()) ? ' и музыка' : '') + ')',
       'Settings.vol ' + (g.vol ? JSON.stringify(g.vol) : '?') + (g.bus ? ' · шины ' + g.bus : ''),
       'сборка ' + (window.wnbBuild || '?') + (g.ver ? ' · ' + g.ver : '')
     ];
@@ -372,7 +394,7 @@ html, body, #canvas { overscroll-behavior: none; }
   var qg = /[?&]musgain=([012])(&|#|$)/.exec(location.search);
   var GAIN = qg ? qg[1] : '';
   var IOS = !!(window.wnbEnv && window.wnbEnv.ios);
-  // 29.11: на iOS по умолчанию — буфер (?musgain=2): громкость элемента там не задаётся (проба на отсоединённом
+  // 28.11: на iOS по умолчанию — буфер (?musgain=2): громкость элемента там не задаётся (проба на отсоединённом
   // Audio() на iOS 26 врёт: «задаётся»), а буфер на iPhone собирался и играл; ?musgain=0|1|2 главнее.
   if (!qg && IOS) GAIN = '2';
   var BUF = GAIN === '2' && !!(window.AudioContext || window.webkitAudioContext);   // без Web Audio — элемент
@@ -551,7 +573,7 @@ html, body, #canvas { overscroll-behavior: none; }
   window.addEventListener('pagehide', away);
   window.addEventListener('pageshow', function () { if (!document.hidden) { wake(); wakeAll(); if (sil.want) silPlay(); tryPlay(); } });
   window.wnbSilent = function () { return SIL_NEED ? (sil.a ? (sil.a.paused ? 'пауза' : 'играет') + (sil.err ? ' ' + sil.err : '') : 'ждёт жеста') : 'не нужен'; };
-  // какой путь держит Web Audio при беззвучном режиме iPhone (29.11: у коллеги он включён): для плашки ?diag=1
+  // какой путь держит Web Audio при беззвучном режиме iPhone (28.11: у коллеги он включён): для плашки ?diag=1
   window.wnbSessionPath = function () {
     var e = window.wnbEnv || {};
     if (!IOS) return 'не iOS — не нужен';
@@ -1106,7 +1128,7 @@ html, body, #canvas { overscroll-behavior: none; }
 </script>
 <script src="wnb-engine-332bf379e9.js"></script>
 <script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"wnb-engine-332bf379e9","experimentalVK":false,"fileSizes":{"wnb-engine-332bf379e9.wasm":39514754,"wnb-eb0fc9cb89.pck":10111056},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"mainPack":"wnb-eb0fc9cb89.pck"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"wnb-engine-332bf379e9","experimentalVK":false,"fileSizes":{"wnb-engine-332bf379e9.wasm":39514754,"wnb-dc380d97b8.pck":10111504},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"mainPack":"wnb-dc380d97b8.pck"};
 try { window.wnbBuild = String(GODOT_CONFIG.mainPack || GODOT_CONFIG.executable || ''); } catch (e) {}
 const GODOT_THREADS_ENABLED = false;
 // Файл движка (wnb-engine-<хэш>.js) не загрузился — старая index.html из кеша ссылается на движок, которого после
