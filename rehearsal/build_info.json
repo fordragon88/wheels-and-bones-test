@@ -3,7 +3,7 @@
  "main": false,
  "counter": "wheelsandbones",
  "engine": "wnb-engine-332bf379e9",
- "pack": "wnb-9b2ded770a.pck",
+ "pack": "wnb-5fdfa66b86.pck",
  "frames_v": "cb300bc8d7",
  "music_v": "87f103730e",
  "sizes": {
@@ -11,12 +11,12 @@
   "wasm_gz": 10114291,
   "js": 279815,
   "js_gz": 68740,
-  "pck": 10106384,
-  "pck_gz": 8985049,
+  "pck": 10107888,
+  "pck_gz": 8986416,
   "frames": 82796308,
   "frames_n": 2536,
   "music": 3899114,
-  "first_gz": 19426466
+  "first_gz": 19431928
  },
- "time": "2026-11-28 01:09"
+ "time": "2026-11-28 02:18"
 }

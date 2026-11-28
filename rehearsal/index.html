@@ -335,8 +335,59 @@ html, body, #canvas { overscroll-behavior: none; }
   //  • ?musgain=1 — вести через GainNode в любом браузере (проверка этого пути), ?musgain=0 — никогда (запасной выход).
   var mus = { a: null, src: '', want: false, vol: 1, muted: false, ctx: null, gain: null, node: null, building: false,
               settable: true, err: '', routes: 0, route_state: '', built_at: '' };
-  var qg = /[?&]musgain=([01])(&|#|$)/.exec(location.search);
+  //  • ?musgain=2 (28.11, отзыв с iPhone: ползунок музыки «не работает») — третий способ без <audio>: дорожка
+  //    скачивается (fetch → decodeAudioData) и играет AudioBufferSourceNode (loop) → GainNode → выход; громкость и
+  //    тишина — в gain. В памяти — только текущая дорожка; пока новая декодируется, старая уже остановлена.
+  var qg = /[?&]musgain=([012])(&|#|$)/.exec(location.search);
   var GAIN = qg ? qg[1] : '';
+  var BUF = GAIN === '2';
+  var bf = { ctx: null, gain: null, node: null, url: '', buffer: null, token: 0, state: 'none', dur: 0 };
+  function bufCtx() {
+    if (bf.ctx) return bf.ctx;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) { mus.err = 'no AudioContext'; return null; }
+    try {
+      bf.ctx = new AC();
+      bf.gain = bf.ctx.createGain();
+      bf.gain.gain.value = mus.vol;
+      bf.gain.connect(bf.ctx.destination);
+      bf.ctx.onstatechange = function () { if (bf.ctx.state === 'running') bufStart(); };
+    } catch (e) { mus.err = String((e && e.name) || e); }
+    return bf.ctx;
+  }
+  function bufStop() {
+    if (bf.node) { try { bf.node.stop(); } catch (e) {} try { bf.node.disconnect(); } catch (e) {} bf.node = null; }
+  }
+  function bufStart() {                                // дорожка есть, игра хочет музыку, вкладка видна, контекст жив
+    if (bf.node || !bf.buffer || !mus.want || document.hidden || !bf.ctx) { if (bf.buffer && !bf.node) bf.state = 'pending'; return; }
+    if (bf.ctx.state !== 'running') { bf.state = 'pending (' + bf.ctx.state + ')'; return; }
+    try {
+      var n = bf.ctx.createBufferSource();
+      n.buffer = bf.buffer; n.loop = true; n.connect(bf.gain); n.start(0);
+      bf.node = n; bf.state = 'playing';
+    } catch (e) { mus.err = String((e && e.name) || e); }
+  }
+  function bufPlay(u) {
+    if (!bufCtx()) return;
+    if (bf.url === u) { bufStart(); return; }
+    bufStop();
+    bf.buffer = null; bf.url = u; bf.dur = 0; bf.state = 'loading';
+    var tk = ++bf.token;
+    fetch(u).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+      .then(function (ab) {
+        if (tk !== bf.token) return null;
+        return new Promise(function (res, rej) {            // Safari: decodeAudioData — и с обратным вызовом
+          var p = bf.ctx.decodeAudioData(ab, res, rej);
+          if (p && p.then) p.then(res, rej);
+        });
+      })
+      .then(function (b) {
+        if (!b || tk !== bf.token) return;
+        bf.buffer = b; bf.dur = b.duration; bf.state = 'decoded';
+        bufStart();
+      })
+      .catch(function (e) { if (tk === bf.token) { bf.state = 'error'; mus.err = String((e && (e.message || e.name)) || e); } });
+  }
   try { var probeA = new Audio(); probeA.volume = 0.5; mus.settable = Math.abs(probeA.volume - 0.5) < 0.01; }
   catch (e) { mus.settable = false; }
   function wantGain() { return GAIN === '1' || (GAIN !== '0' && !mus.settable); }
@@ -359,9 +410,18 @@ html, body, #canvas { overscroll-behavior: none; }
     } else if (a && mus.settable) {
       try { a.volume = v; } catch (e) {}
     }
+    if (bf.gain) {
+      try {
+        var bg = bf.gain.gain, bt = bf.ctx.currentTime;
+        bg.cancelScheduledValues(bt); bg.setValueAtTime(bg.value, bt); bg.setTargetAtTime(v, bt, 0.03);
+      } catch (e) { try { bf.gain.gain.value = v; } catch (e2) {} }
+    }
   }
   // контекст поднять, если он «suspended»/«interrupted» (жест игрока, возврат вкладки)
   function wake() {
+    if (bf.ctx && bf.ctx.state !== 'running' && bf.ctx.state !== 'closed') {
+      try { var bp = bf.ctx.resume(); if (bp && bp.then) bp.then(bufStart, function () {}); } catch (e) {}
+    }
     var c = mus.ctx;
     if (c && c.state !== 'running' && c.state !== 'closed') {
       try { var p = c.resume(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
@@ -401,12 +461,16 @@ html, body, #canvas { overscroll-behavior: none; }
     } catch (e) { mus.building = false; mus.err = String((e && e.name) || e); }
   }
   function tryPlay() {
+    if (BUF) { bufStart(); return; }
     if (mus.want && mus.a && mus.a.paused && !document.hidden) {
       try { var p = mus.a.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
     }
   }
   function gesture() { wake(); try { route(); } catch (e) {} tryPlay(); }
-  function away() { if (mus.a) { try { mus.a.pause(); } catch (e) {} } }
+  function away() {
+    if (mus.a) { try { mus.a.pause(); } catch (e) {} }
+    if (bf.node) { bufStop(); bf.state = 'paused'; }   // с начала дорожки при возврате (как элемент после паузы — почти)
+  }
   ['pointerdown', 'keydown', 'touchend', 'mousedown'].forEach(function (e) { document.addEventListener(e, gesture, true); });
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) away(); else { wake(); tryPlay(); }
@@ -415,13 +479,26 @@ html, body, #canvas { overscroll-behavior: none; }
   window.addEventListener('pagehide', away);
   window.addEventListener('pageshow', function () { if (!document.hidden) { wake(); tryPlay(); } });
   window.wnbMusic = {
-    play: function (u) { var a = el(); if (mus.src !== u) { mus.src = u; a.src = u; } mus.want = true; tryPlay(); },
-    stop: function () { mus.want = false; if (mus.a) mus.a.pause(); },
-    volume: function (v) { mus.vol = Math.max(0, Math.min(1, +v || 0)); el(); applyVol(); },
-    state: function () { return mus.a ? ((mus.a.paused ? 'paused' : 'playing') + ' ' + mus.src) : 'none'; },
+    play: function (u) {
+      mus.want = true;
+      if (BUF) { mus.src = u; bufPlay(u); return; }
+      var a = el(); if (mus.src !== u) { mus.src = u; a.src = u; } tryPlay();
+    },
+    stop: function () { mus.want = false; if (mus.a) mus.a.pause(); if (bf.node) { bufStop(); bf.state = 'stopped'; } },
+    volume: function (v) { mus.vol = Math.max(0, Math.min(1, +v || 0)); if (!BUF) el(); applyVol(); },
+    state: function () {
+      if (BUF) return (bf.node ? 'playing' : 'paused') + ' ' + mus.src;
+      return mus.a ? ((mus.a.paused ? 'paused' : 'playing') + ' ' + mus.src) : 'none';
+    },
     // проверка (web_smoke music): как сейчас ведётся громкость
     info: function () {
       var g = null, ev = null;
+      if (BUF) {
+        try { if (bf.gain) g = +bf.gain.gain.value.toFixed(4); } catch (e) {}
+        return JSON.stringify({ mode: 'buffer', force: GAIN, vol: +mus.vol.toFixed(4), gain: g, state: bf.state,
+          dur: +(bf.dur || 0).toFixed(1), ctx: bf.ctx ? bf.ctx.state : '', err: mus.err, src: mus.src,
+          playing: !!bf.node });
+      }
       try { if (mus.gain) g = +mus.gain.gain.value.toFixed(4); } catch (e) {}
       try { if (mus.a) ev = +mus.a.volume.toFixed(4); } catch (e) {}
       return JSON.stringify({ mode: mus.gain ? 'gain' : 'element', want_gain: wantGain(), force: GAIN,
@@ -430,7 +507,7 @@ html, body, #canvas { overscroll-behavior: none; }
         route_state: mus.route_state, built: mus.built_at, playing: mus.a ? !mus.a.paused : false });
     }
   };
-  window.wnbMusicCtx = function () { return mus.ctx; };
+  window.wnbMusicCtx = function () { return BUF ? bf.ctx : mus.ctx; };
 
   // --- буфер обмена: Godot копирует через navigator.clipboard.writeText (DisplayServer.clipboard_set), ответ браузера
   // игре не доходит. В рамке чужого сайта (страница WordPress) запись разрешена, только если у <iframe> есть
@@ -947,7 +1024,7 @@ html, body, #canvas { overscroll-behavior: none; }
 </script>
 <script src="wnb-engine-332bf379e9.js"></script>
 <script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"wnb-engine-332bf379e9","experimentalVK":false,"fileSizes":{"wnb-engine-332bf379e9.wasm":39514754,"wnb-9b2ded770a.pck":10106384},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"mainPack":"wnb-9b2ded770a.pck"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"wnb-engine-332bf379e9","experimentalVK":false,"fileSizes":{"wnb-engine-332bf379e9.wasm":39514754,"wnb-5fdfa66b86.pck":10107888},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"mainPack":"wnb-5fdfa66b86.pck"};
 try { window.wnbBuild = String(GODOT_CONFIG.mainPack || GODOT_CONFIG.executable || ''); } catch (e) {}
 const GODOT_THREADS_ENABLED = false;
 // Файл движка (wnb-engine-<хэш>.js) не загрузился — старая index.html из кеша ссылается на движок, которого после
